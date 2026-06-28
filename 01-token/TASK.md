@@ -53,7 +53,7 @@ The standard ERC-20 surface:
 **Events**
 
 - `Transfer(address indexed from, address indexed to, uint256 value)` — emitted
-  on every transfer
+  on every transfer.
 - `Approval(address indexed owner, address indexed spender, uint256 value)` —
   emitted on every approval.
 

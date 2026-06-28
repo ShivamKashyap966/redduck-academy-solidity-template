@@ -10,11 +10,11 @@ You can reuse the structure of your previous PriceVoting contract as a starting 
 
 ## What changes from the previous task
 
-Two things:
+Three things:
 
 1. **Mid-voting withdrawal is allowed.** A voter can withdraw their previously locked tokens at any time, including during the voting period. They get back exactly the tokens they put in.
 
-2. **The leader-tracking at every moment of time** You can drop that requirement. But leader should be available after finalizing.
+2. **The leader no longer needs to be tracked at every moment.** You can drop that requirement, but the leader should be available after finalizing.
 
 3. **Almost nothing about the contract's shape is prescribed.** You decide the function signatures, the events, the errors, the storage layout, the resolution mechanism, and whether there's a separate settlement step after voting ends. Pick whatever makes your design work.
 

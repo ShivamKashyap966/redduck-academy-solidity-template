@@ -51,7 +51,7 @@ You may add more state variables or events if you find them useful. The fields a
 
 ## Edge cases
 
-If `finalize()` is called and no votes were cast or there is a tie, price should not be changed
+If `finalize()` is called and no votes were cast or there is a tie, the price should not be changed.
 
 ## Testing requirements
 
