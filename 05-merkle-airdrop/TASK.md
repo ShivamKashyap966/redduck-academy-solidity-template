@@ -57,4 +57,4 @@ A starter test file is provided with two failing happy-path tests:
 - A successful claim via `claim` for an address in the Merkle list.
 - A successful claim via `claimWithSignature` for an address authorized by the signer.
 
-Both fail until the contract and the matching off-chain code are implemented. Add tests covering the failure modes.
+Both fail until the contract and the matching off-chain code are implemented. Add tests to that file covering the failure modes.
