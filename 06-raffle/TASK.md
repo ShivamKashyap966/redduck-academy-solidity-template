@@ -44,6 +44,6 @@ The contract may not import any library that solves the weighted-draw or random-
 
 ## Tests
 
-A starter test in `tests/Raffle.test.ts` runs the happy path end to end: two deposits, time travel to the deadline, a forced VRF response, and a claim. It fails until the four functions work. Don't edit it.
-
-Add tests for the failure modes and any edge cases that exercise the boundaries of the weighted pick.
+`tests/Raffle.test.ts` already contains a starter happy-path test (two deposits → time travel to deadline → forced VRF response → claim). It fails until the four functions work. Keep this test unchanged.
+ 
+Add all further tests to this **same file**, after the existing one. Cover the failure modes and the edge cases at the boundaries of the weighted pick.
