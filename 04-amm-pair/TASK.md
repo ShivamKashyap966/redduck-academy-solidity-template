@@ -74,4 +74,4 @@ The contract must not copy code from Uniswap V2's source. Derive the implementat
 
 A starter test in `tests/Pair.test.ts` covers one swap end-to-end. It fails until `addLiquidity`, `swap`, and `getAmountOut` are implemented. Don't edit it.
 
-Add tests in a separate file covering the other behaviors: first and subsequent liquidity provision, removal, slippage rejection, invalid-token rejection, the first-depositor lock, and any edge cases you find worth exercising.
+Complete that file covering the other behaviors: first and subsequent liquidity provision, removal, slippage rejection, invalid-token rejection, the first-depositor lock, and any edge cases you find worth exercising.
