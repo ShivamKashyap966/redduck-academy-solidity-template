@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://redduck.io">
+  <a href="https://redduck.io/?utm_source=github&amp;utm_medium=readme&amp;utm_campaign=redduck-academy-solidity-template">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset=".github/assets/redduck-logo-dark.svg">
       <img src=".github/assets/redduck-logo.svg" alt="RedDuck" width="240">
@@ -15,7 +15,7 @@
 
 ---
 
-A Solidity learning template by [RedDuck](https://redduck.io). Fork it, work through the tasks, push your work. Each task is a self-contained folder with its own brief, contracts and tests, and only one of them is compiled and tested at a time, so an unfinished task never blocks the next one.
+A Solidity learning template by [RedDuck](https://redduck.io/?utm_source=github&utm_medium=readme&utm_campaign=redduck-academy-solidity-template). Fork it, work through the tasks, push your work. Each task is a self-contained folder with its own brief, contracts and tests, and only one of them is compiled and tested at a time, so an unfinished task never blocks the next one.
 
 ## Built with
 
