@@ -52,8 +52,29 @@ To handle dynamic weight increases and decreases cleanly, our contract implement
   - **After voting has ended (`block.timestamp >= votingEnd`)**: The voting window is closed. Voters are entitled to withdraw their locked principal back to their wallets, but withdrawals past the deadline do not alter the historical `priceWeight` tally.
 - When `finalize()` is called (post-deadline), it evaluates the leader from the votes held through the deadline. If there is an outright leader, `finalWinningPrice` is saved; if there is a tie or zero votes, it settles at 0.
 
-### D. Trade-offs and Efficiency
+### D. Documented Deterministic Tie-Breaking Rule
+
+- **The Rule**: If two or more candidate prices share the maximum positive weight at the close of voting (or during active voting when evaluating leader / tie status), the contract declares a **tie** (`isTie() == true`).
+- **Outcome**: A tie means no consensus was reached among token holders. Under this rule, `winningPrice()` and `currentTokenPrice()` resolve strictly to `0`, and `leader()` returns price `0` with the shared weight. An election also resolves to `0` if no votes were cast. Only an outright, unique highest-weighted price wins.
+- **Consistency**: This rule is enforced consistently across live leader views (`leader()`, `isTie()`), internal calculation (`_calculateLeader()`), and final settlement (`finalize()`).
+
+### E. Bounded Iterations and Gas Safety (SWC-128 Mitigation)
+
+To prevent denial-of-service (DoS) via gas exhaustion through unbounded voter activity, the contract enforces strict upper bounds:
+
+1. **`MAX_CANDIDATE_PRICES = 250`**:
+   - The total number of distinct candidate prices is capped at 250.
+   - Any attempt to introduce a new price beyond this threshold reverts with `MaxCandidatePricesReached`.
+   - Consequently, the `_calculateLeader()` loop executed during `finalize()` is strictly bounded by 250 iterations, consuming less than 2% of the block gas limit under EVM Cancun.
+2. **`MAX_VOTER_PRICES = 50` & Dynamic Array Pruning**:
+   - A single voter cannot maintain active stakes in more than 50 distinct prices (`MaxVoterPricesReached`).
+   - The contract uses an internal index mapping `voterPriceIndex` to perform $O(1)$ swap-and-pop removal whenever a voter's balance in a price reaches 0, keeping the voter's active price list compact.
+   - Calling `withdrawAll()` iterates at most 50 elements and immediately deletes the array (`delete voterPricesList[msg.sender]`).
+3. **Explicit Batch Withdrawal `withdraw(uint256[] calldata prices)`**:
+   - Callers can also supply a custom array of prices to withdraw in explicit, caller-bounded batches.
+
+### F. Trade-offs and Efficiency
 
 - **Simplicity & Safety**: Eliminates the overhead and security risks of complex doubly linked lists or dynamic on-chain sorted trees in Solidity.
-- **Gas Predictability**: Token price elections typically involve a small set of discrete target prices (rarely exceeding dozens of candidates). An $O(N)$ pass over candidate prices at finalization is gas-efficient and robust.
+- **Gas Predictability**: Both candidate prices and voter prices have compile-time upper bounds, preventing griefing or DoS attacks.
 - **Checks-Effects-Interactions**: All accounting updates (reducing voter stakes and total locked balances) occur before external ERC-20 transfers, protecting against reentrancy.

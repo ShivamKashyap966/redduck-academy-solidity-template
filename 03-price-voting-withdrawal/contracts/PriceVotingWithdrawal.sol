@@ -20,9 +20,31 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 /// the highest-weighted price and tie status. After `votingEnd`, the election
 /// tally is locked: voters can still withdraw their principal tokens, but the
 /// vote tally remains preserved for finalization.
+///
+/// TIE-BREAKING RULE:
+/// If two or more candidate prices share the maximum positive weight at the
+/// close of voting (or during active voting when checking leader/isTie), a tie
+/// is declared. Under this contract's tie-breaking rule, a tie means no single
+/// price achieved consensus. Therefore, the winning price resolves to 0
+/// (`finalWinningPrice = 0`), and `leader()` returns price 0. If no votes are
+/// cast, the winning price is also 0. Only an outright unique highest-weighted
+/// price wins.
+///
+/// BOUNDED ITERATION GUARANTEE:
+/// 1. `candidatePrices` is capped by `MAX_CANDIDATE_PRICES` (250). New candidate
+///    prices beyond this limit revert with `MaxCandidatePricesReached`, ensuring
+///    that `_calculateLeader()` and `finalize()` loops are strictly bounded and
+///    can never exceed the block gas limit.
+/// 2. `voterPricesList` is capped by `MAX_VOTER_PRICES` (50) per voter and kept
+///    compact by pruning positions on full withdrawal. Thus `withdrawAll()` is
+///    strictly bounded and safe against DoS.
 contract PriceVotingWithdrawal {
     IERC20 private immutable tokenContract;
     uint256 private immutable votingEndTimestamp;
+
+    // Safety bounds against unbounded iteration (SWC-128)
+    uint256 public constant MAX_CANDIDATE_PRICES = 250;
+    uint256 public constant MAX_VOTER_PRICES = 50;
 
     // Accounting
     mapping(uint256 => uint256) private priceWeight;
@@ -30,13 +52,13 @@ contract PriceVotingWithdrawal {
     mapping(address => uint256) private voterTotalLocked;
     mapping(address => uint256) private voterTotalWithdrawn;
 
-    // Candidate prices tracking
+    // Candidate prices tracking (bounded by MAX_CANDIDATE_PRICES)
     uint256[] private candidatePrices;
     mapping(uint256 => bool) private priceSeen;
 
-    // Per-voter prices tracking for batch operations
+    // Per-voter prices tracking (bounded by MAX_VOTER_PRICES, compacted on withdrawal)
     mapping(address => uint256[]) private voterPricesList;
-    mapping(address => mapping(uint256 => bool)) private voterPriceSeen;
+    mapping(address => mapping(uint256 => uint256)) private voterPriceIndex; // 1-based index (0 = not present)
 
     // Settlement state
     uint256 private finalWinningPrice;
@@ -50,6 +72,8 @@ contract PriceVotingWithdrawal {
     error NothingToWithdraw();
     error NothingToClaim();
     error TransferFailed();
+    error MaxCandidatePricesReached();
+    error MaxVoterPricesReached();
 
     event Voted(address indexed voter, uint256 indexed price, uint256 amount);
     event Withdrawn(address indexed voter, uint256 indexed price, uint256 amount);
@@ -74,12 +98,14 @@ contract PriceVotingWithdrawal {
         voterTotalLocked[msg.sender] += amount;
 
         if (!priceSeen[price]) {
+            if (candidatePrices.length >= MAX_CANDIDATE_PRICES) revert MaxCandidatePricesReached();
             priceSeen[price] = true;
             candidatePrices.push(price);
         }
-        if (!voterPriceSeen[msg.sender][price]) {
-            voterPriceSeen[msg.sender][price] = true;
+        if (voterPriceIndex[msg.sender][price] == 0) {
+            if (voterPricesList[msg.sender].length >= MAX_VOTER_PRICES) revert MaxVoterPricesReached();
             voterPricesList[msg.sender].push(price);
+            voterPriceIndex[msg.sender][price] = voterPricesList[msg.sender].length;
         }
 
         // Interaction
@@ -100,9 +126,25 @@ contract PriceVotingWithdrawal {
         if (amount > userStake) revert InsufficientLockedBalance();
 
         // Effects
-        voterPriceStake[msg.sender][price] = userStake - amount;
+        uint256 newStake = userStake - amount;
+        voterPriceStake[msg.sender][price] = newStake;
         voterTotalLocked[msg.sender] -= amount;
         voterTotalWithdrawn[msg.sender] += amount;
+
+        // Prune empty position from voterPricesList using swap-and-pop to keep list compact
+        if (newStake == 0) {
+            uint256 idx = voterPriceIndex[msg.sender][price];
+            if (idx > 0) {
+                uint256 lastIdx = voterPricesList[msg.sender].length;
+                if (idx != lastIdx) {
+                    uint256 lastPrice = voterPricesList[msg.sender][lastIdx - 1];
+                    voterPricesList[msg.sender][idx - 1] = lastPrice;
+                    voterPriceIndex[msg.sender][lastPrice] = idx;
+                }
+                voterPricesList[msg.sender].pop();
+                voterPriceIndex[msg.sender][price] = 0;
+            }
+        }
 
         // If withdrawn during active voting, remove the vote weight.
         // If withdrawn after voting ended, the election tally is already frozen.
@@ -127,13 +169,57 @@ contract PriceVotingWithdrawal {
         withdraw(price, userStake);
     }
 
+    /// @notice Withdraw all tokens locked by the caller across an explicit list of prices.
+    /// @dev Bounded by caller-supplied calldata array length.
+    function withdraw(uint256[] calldata prices) external {
+        uint256 total;
+        for (uint256 i = 0; i < prices.length; i++) {
+            uint256 p = prices[i];
+            uint256 stake = voterPriceStake[msg.sender][p];
+            if (stake > 0) {
+                voterPriceStake[msg.sender][p] = 0;
+                total += stake;
+                if (block.timestamp < votingEndTimestamp) {
+                    priceWeight[p] -= stake;
+                }
+                emit Withdrawn(msg.sender, p, stake);
+
+                uint256 idx = voterPriceIndex[msg.sender][p];
+                if (idx > 0) {
+                    uint256 lastIdx = voterPricesList[msg.sender].length;
+                    if (idx != lastIdx) {
+                        uint256 lastPrice = voterPricesList[msg.sender][lastIdx - 1];
+                        voterPricesList[msg.sender][idx - 1] = lastPrice;
+                        voterPriceIndex[msg.sender][lastPrice] = idx;
+                    }
+                    voterPricesList[msg.sender].pop();
+                    voterPriceIndex[msg.sender][p] = 0;
+                }
+            }
+        }
+        if (total == 0) revert NothingToWithdraw();
+
+        voterTotalLocked[msg.sender] -= total;
+        voterTotalWithdrawn[msg.sender] += total;
+
+        try tokenContract.transfer(msg.sender, total) returns (bool ok) {
+            if (!ok) revert TransferFailed();
+        } catch {
+            revert TransferFailed();
+        }
+
+        emit Claimed(msg.sender, total);
+    }
+
     /// @notice Withdraw all tokens locked by the caller across all prices.
+    /// @dev Iteration is strictly bounded by MAX_VOTER_PRICES.
     function withdrawAll() public {
         uint256 total = voterTotalLocked[msg.sender];
         if (total == 0) revert NothingToWithdraw();
 
         uint256[] storage prices = voterPricesList[msg.sender];
-        for (uint256 i = 0; i < prices.length; i++) {
+        uint256 len = prices.length;
+        for (uint256 i = 0; i < len; i++) {
             uint256 p = prices[i];
             uint256 stake = voterPriceStake[msg.sender][p];
             if (stake > 0) {
@@ -143,7 +229,10 @@ contract PriceVotingWithdrawal {
                 }
                 emit Withdrawn(msg.sender, p, stake);
             }
+            voterPriceIndex[msg.sender][p] = 0;
         }
+        delete voterPricesList[msg.sender];
+
         voterTotalLocked[msg.sender] = 0;
         voterTotalWithdrawn[msg.sender] += total;
 
@@ -163,6 +252,9 @@ contract PriceVotingWithdrawal {
     }
 
     /// @notice Finalize the election after voting ends and set the winning price.
+    /// @dev Tie-breaking rule: If two or more prices tie for the highest positive weight,
+    ///      or if no votes were cast, the winning price is set to 0 (no consensus reached).
+    ///      Only an outright unique highest-weighted price wins.
     function finalize() external {
         if (block.timestamp < votingEndTimestamp) revert VotingActive();
         if (isFinalized) revert AlreadyFinalized();
@@ -181,6 +273,8 @@ contract PriceVotingWithdrawal {
     // ----- read / view -----
 
     /// @dev Internal helper to determine the leading price, weight, and tie status.
+    ///      Tie-breaking rule: Sets tie = true if two or more prices share maxWeight > 0.
+    ///      Loop is strictly bounded by MAX_CANDIDATE_PRICES (250).
     function _calculateLeader() internal view returns (uint256 bestPrice, uint256 maxWeight, bool tie) {
         uint256 len = candidatePrices.length;
         if (len == 0) {
@@ -201,6 +295,8 @@ contract PriceVotingWithdrawal {
         return (bestPrice, maxWeight, tie);
     }
 
+    /// @notice Returns the current leading price and its accumulated weight.
+    /// @dev Tie-breaking rule: Returns (0, maxWeight) if multiple prices share the top weight.
     function leader() public view returns (uint256 price, uint256 weight) {
         (uint256 bestPrice, uint256 maxWeight, bool tie) = _calculateLeader();
         if (tie) {
@@ -209,15 +305,20 @@ contract PriceVotingWithdrawal {
         return (bestPrice, maxWeight);
     }
 
+    /// @notice Returns whether there is currently a tie for the top price.
     function isTie() public view returns (bool) {
         (, , bool tie) = _calculateLeader();
         return tie;
     }
 
+    /// @notice Returns the finalized winning token price.
+    /// @dev Tie-breaking rule: Returns 0 if not finalized, if tied, or if no votes were cast.
     function currentTokenPrice() external view returns (uint256) {
         return finalWinningPrice;
     }
 
+    /// @notice Returns the finalized winning token price.
+    /// @dev Tie-breaking rule: Returns 0 if not finalized, if tied, or if no votes were cast.
     function winningPrice() external view returns (uint256) {
         return finalWinningPrice;
     }

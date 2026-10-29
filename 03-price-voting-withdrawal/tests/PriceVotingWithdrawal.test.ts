@@ -252,6 +252,40 @@ describe("PriceVotingWithdrawal", function () {
       assert.equal(await voting.read.weightOf([200n]), 0n);
     });
 
+    it("allows batch withdrawal using withdraw(uint256[] calldata prices)", async function () {
+      const { token, voting, alice } = await networkHelpers.loadFixture(deployFixture);
+
+      await voting.write.vote([100n, parseEther("30")], { account: alice.account });
+      await voting.write.vote([200n, parseEther("40")], { account: alice.account });
+      await voting.write.vote([300n, parseEther("50")], { account: alice.account });
+
+      // Withdraw only prices 100 and 300
+      await voting.write.withdraw([[100n, 300n]], { account: alice.account });
+
+      assert.equal(await voting.read.lockedOf([alice.account.address, 100n]), 0n);
+      assert.equal(await voting.read.lockedOf([alice.account.address, 200n]), parseEther("40"));
+      assert.equal(await voting.read.lockedOf([alice.account.address, 300n]), 0n);
+      assert.equal(await voting.read.lockedOf([alice.account.address]), parseEther("40"));
+      assert.equal(await token.read.balanceOf([alice.account.address]), parseEther("960"));
+    });
+
+    it("enforces MAX_VOTER_PRICES bound per voter", async function () {
+      const { token, voting, alice } = await networkHelpers.loadFixture(deployFixture);
+
+      // Approve more tokens to cast 51 votes of 1 token each
+      await token.write.approve([voting.address, parseEther("100")], { account: alice.account });
+
+      for (let i = 1n; i <= 50n; i++) {
+        await voting.write.vote([i, parseEther("1")], { account: alice.account });
+      }
+
+      // 51st distinct price should revert with MaxVoterPricesReached
+      await assert.rejects(
+        voting.write.vote([51n, parseEther("1")], { account: alice.account }),
+        /MaxVoterPricesReached/,
+      );
+    });
+
     it("reverts withdrawing zero amount", async function () {
       const { voting, alice } = await networkHelpers.loadFixture(deployFixture);
 
@@ -394,6 +428,65 @@ describe("PriceVotingWithdrawal", function () {
       assert.equal(await voting.read.finalized(), true);
       assert.equal(await voting.read.currentTokenPrice(), 200n);
       assert.equal(await voting.read.winningPrice(), 200n);
+    });
+
+    it("asserts the final winning price after a mid-voting partial withdrawal causes another price to overtake the leader", async function () {
+      const { voting, alice, bob } = await networkHelpers.loadFixture(deployFixture);
+
+      // Alice votes 50 for price 100
+      await voting.write.vote([100n, parseEther("50")], { account: alice.account });
+      // Bob votes 80 for price 200, making price 200 the initial leader
+      await voting.write.vote([200n, parseEther("80")], { account: bob.account });
+
+      const [leadBefore, weightBefore] = await voting.read.leader();
+      assert.equal(leadBefore, 200n);
+      assert.equal(weightBefore, parseEther("80"));
+
+      // Bob withdraws 40 from price 200 during active voting, dropping its weight to 40
+      await voting.write.withdraw([200n, parseEther("40")], { account: bob.account });
+
+      // Alice's price 100 (weight 50) now overtakes Bob's price 200 (weight 40)
+      const [leadAfter, weightAfter] = await voting.read.leader();
+      assert.equal(leadAfter, 100n);
+      assert.equal(weightAfter, parseEther("50"));
+
+      // Voting period concludes
+      await passDeadline();
+
+      // Finalize the election
+      await viem.assertions.emitWithArgs(voting.write.finalize(), voting, "PriceFinalized", [
+        100n,
+        parseEther("50"),
+      ]);
+
+      // Assert winningPrice and currentTokenPrice reflect the overtaken winner (price 100)
+      assert.equal(await voting.read.winningPrice(), 100n);
+      assert.equal(await voting.read.currentTokenPrice(), 100n);
+      assert.equal(await voting.read.finalized(), true);
+    });
+
+    it("asserts the final winning price after a mid-voting withdrawAll causes the runner-up to win", async function () {
+      const { voting, alice, bob } = await networkHelpers.loadFixture(deployFixture);
+
+      // Alice votes 60 for price 150
+      await voting.write.vote([150n, parseEther("60")], { account: alice.account });
+      // Bob votes 100 for price 300, leading the race
+      await voting.write.vote([300n, parseEther("100")], { account: bob.account });
+
+      // Bob changes his mind and withdraws all his tokens during voting
+      await voting.write.withdrawAll({ account: bob.account });
+
+      // Price 150 is now the lone active leader
+      const [leadPrice, leadWeight] = await voting.read.leader();
+      assert.equal(leadPrice, 150n);
+      assert.equal(leadWeight, parseEther("60"));
+
+      // Pass deadline and finalize
+      await passDeadline();
+      await voting.write.finalize();
+
+      assert.equal(await voting.read.winningPrice(), 150n);
+      assert.equal(await voting.read.currentTokenPrice(), 150n);
     });
 
     it("finalizes with 0 when there are no votes", async function () {
