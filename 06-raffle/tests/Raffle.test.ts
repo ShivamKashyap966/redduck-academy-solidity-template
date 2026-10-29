@@ -114,6 +114,20 @@ describe("Raffle", function () {
       );
     });
 
+    it("maintains running total of deposited tokens", async function () {
+      const { raffle, alice, bob } = await deployFixture();
+      assert.equal(await raffle.read.totalDeposited(), 0n);
+      assert.equal(await raffle.read.totalDeposits(), 0n);
+
+      await raffle.write.deposit([parseEther("2")], { account: alice.account });
+      assert.equal(await raffle.read.totalDeposited(), parseEther("2"));
+      assert.equal(await raffle.read.totalDeposits(), parseEther("2"));
+
+      await raffle.write.deposit([parseEther("5")], { account: bob.account });
+      assert.equal(await raffle.read.totalDeposited(), parseEther("7"));
+      assert.equal(await raffle.read.totalDeposits(), parseEther("7"));
+    });
+
     it("reverts deposit when amount is 0", async function () {
       const { raffle, alice } = await deployFixture();
 
@@ -383,6 +397,25 @@ describe("Raffle", function () {
 
       // Second claim must revert
       await assert.rejects(raffle.write.claim([0n], { account: alice.account }), /InvalidClaim/);
+    });
+
+    it("persists the winning address in state variable on claim", async function () {
+      const { coord, raffle, drawTime, alice } = await deployFixture();
+
+      await raffle.write.deposit([parseEther("1")], { account: alice.account });
+      await networkHelpers.time.increaseTo(drawTime);
+      await raffle.write.drawWinner();
+      const requestId = (await raffle.read.requestId()) as bigint;
+
+      await coord.write.fulfillRandomWordsWithOverride([requestId, raffle.address, [0n]]);
+
+      assert.equal(await raffle.read.winner(), "0x0000000000000000000000000000000000000000");
+      assert.equal(await raffle.read.getWinner(), "0x0000000000000000000000000000000000000000");
+
+      await raffle.write.claim([0n], { account: alice.account });
+
+      assert.equal(getAddress(await raffle.read.winner()), getAddress(alice.account.address));
+      assert.equal(getAddress(await raffle.read.getWinner()), getAddress(alice.account.address));
     });
   });
 });

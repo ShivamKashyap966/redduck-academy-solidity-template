@@ -34,8 +34,10 @@ contract Raffle is VRFConsumerBaseV2Plus {
     uint256 public constant MAX_PRICE_AGE = 1 hours;
 
     uint256 public totalWeight;
+    uint256 public totalDeposited;
     uint256 public requestId;
     uint256 public randomWord;
+    address public winner;
 
     bool public drawRequested;
     bool public randomnessFulfilled;
@@ -96,6 +98,7 @@ contract Raffle is VRFConsumerBaseV2Plus {
         if (weight == 0) revert ZeroAmount();
 
         totalWeight += weight;
+        totalDeposited += amount;
         entries.push(Entry({player: msg.sender, amount: amount, weight: weight, cumulativeWeight: totalWeight}));
 
         token.transferFrom(msg.sender, address(this), amount);
@@ -154,6 +157,7 @@ contract Raffle is VRFConsumerBaseV2Plus {
         }
 
         isClaimed = true;
+        winner = msg.sender;
 
         uint256 prize = token.balanceOf(address(this));
         token.transfer(msg.sender, prize);
@@ -186,5 +190,17 @@ contract Raffle is VRFConsumerBaseV2Plus {
         if (index >= entries.length) revert InvalidClaim();
         Entry memory e = entries[index];
         return (e.player, e.amount, e.weight, e.cumulativeWeight);
+    }
+
+    function totalDeposits() external view returns (uint256) {
+        return totalDeposited;
+    }
+
+    function totalTokens() external view returns (uint256) {
+        return totalDeposited;
+    }
+
+    function getWinner() external view returns (address) {
+        return winner;
     }
 }
