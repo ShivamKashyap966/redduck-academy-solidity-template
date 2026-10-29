@@ -73,11 +73,11 @@ contract Pair is ERC20 {
             _mint(msg.sender, liquidity);
         }
 
-        reserve0 += amount0;
-        reserve1 += amount1;
-
         token0.transferFrom(msg.sender, address(this), amount0);
         token1.transferFrom(msg.sender, address(this), amount1);
+
+        reserve0 = token0.balanceOf(address(this));
+        reserve1 = token1.balanceOf(address(this));
 
         emit LiquidityAdded(msg.sender, amount0, amount1, liquidity);
     }
@@ -96,11 +96,11 @@ contract Pair is ERC20 {
 
         _burn(msg.sender, liquidity);
 
-        reserve0 -= amount0;
-        reserve1 -= amount1;
-
         token0.transfer(msg.sender, amount0);
         token1.transfer(msg.sender, amount1);
+
+        reserve0 = token0.balanceOf(address(this));
+        reserve1 = token1.balanceOf(address(this));
 
         emit LiquidityRemoved(msg.sender, amount0, amount1, liquidity);
     }
@@ -120,18 +120,19 @@ contract Pair is ERC20 {
         amountOut = getAmountOut(amountIn, reserveIn, reserveOut);
         if (amountOut < minAmountOut) revert InsufficientOutput();
 
-        if (isToken0) {
-            reserve0 += amountIn;
-            reserve1 -= amountOut;
-        } else {
-            reserve1 += amountIn;
-            reserve0 -= amountOut;
-        }
-
         IERC20(tokenIn).transferFrom(msg.sender, address(this), amountIn);
         tokenOut.transfer(msg.sender, amountOut);
 
+        reserve0 = token0.balanceOf(address(this));
+        reserve1 = token1.balanceOf(address(this));
+
         emit Swapped(msg.sender, tokenIn, amountIn, amountOut);
+    }
+
+    /// @notice Forces reserves to match actual token balances.
+    function sync() external nonReentrant {
+        reserve0 = token0.balanceOf(address(this));
+        reserve1 = token1.balanceOf(address(this));
     }
 
     function _sqrt(uint256 y) internal pure returns (uint256 z) {

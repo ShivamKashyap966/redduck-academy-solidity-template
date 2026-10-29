@@ -392,4 +392,33 @@ describe("Pair (pull-based AMM)", function () {
       assert.ok(currK > prevK, "k grew on third swap");
     });
   });
+
+  describe("reserves sync with actual token balances", function () {
+    it("keeps reserves in sync with actual token balances after addLiquidity, swap, removeLiquidity, and sync", async function () {
+      const { pair, tokenA, tokenB, deployer, alice } = await deployFixture();
+
+      // After addLiquidity
+      await pair.write.addLiquidity([parseEther("1000"), parseEther("2000")]);
+      assert.equal(await pair.read.reserve0(), await tokenA.read.balanceOf([pair.address]));
+      assert.equal(await pair.read.reserve1(), await tokenB.read.balanceOf([pair.address]));
+
+      // After swap
+      await pair.write.swap([tokenA.address, parseEther("100"), 0n], { account: alice.account });
+      assert.equal(await pair.read.reserve0(), await tokenA.read.balanceOf([pair.address]));
+      assert.equal(await pair.read.reserve1(), await tokenB.read.balanceOf([pair.address]));
+
+      // After removeLiquidity
+      const deployerLP = (await pair.read.balanceOf([deployer.account.address])) as bigint;
+      await pair.write.removeLiquidity([deployerLP / 2n]);
+      assert.equal(await pair.read.reserve0(), await tokenA.read.balanceOf([pair.address]));
+      assert.equal(await pair.read.reserve1(), await tokenB.read.balanceOf([pair.address]));
+
+      // Sync reconciles direct token donation
+      await tokenA.write.transfer([pair.address, parseEther("50")]);
+      assert.notEqual(await pair.read.reserve0(), await tokenA.read.balanceOf([pair.address]));
+      await pair.write.sync();
+      assert.equal(await pair.read.reserve0(), await tokenA.read.balanceOf([pair.address]));
+      assert.equal(await pair.read.reserve1(), await tokenB.read.balanceOf([pair.address]));
+    });
+  });
 });
