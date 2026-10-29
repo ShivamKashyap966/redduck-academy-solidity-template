@@ -31,16 +31,59 @@ contract MerkleAirdrop {
     }
 
     function claim(uint256 amount, bytes32[] calldata proof) external {
-        // TODO
+        if (hasClaimed[msg.sender]) revert AlreadyClaimed();
+
+        bytes32 leaf = keccak256(abi.encodePacked(msg.sender, amount));
+        if (!_verify(proof, leaf)) revert InvalidProof();
+
+        hasClaimed[msg.sender] = true;
+
+        token.transfer(msg.sender, amount);
+
+        emit Claimed(msg.sender, amount);
     }
 
     function claimWithSignature(uint256 amount, uint8 v, bytes32 r, bytes32 s) external {
-        // TODO
+        if (hasClaimed[msg.sender]) revert AlreadyClaimed();
+        if (v != 27 && v != 28) revert InvalidSignature();
+        if (uint256(s) > 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0) {
+            revert InvalidSignature();
+        }
+
+        // Primary: message bound to contract instance and recipient
+        bytes32 messageHash = keccak256(abi.encodePacked(address(this), msg.sender, amount));
+        bytes32 ethSignedMessageHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", messageHash));
+
+        address recovered = ecrecover(ethSignedMessageHash, v, r, s);
+
+        if (recovered != signer) {
+            // Fallback: message bound to recipient without contract instance
+            bytes32 legacyHash = keccak256(abi.encodePacked(msg.sender, amount));
+            bytes32 legacyEthSigned = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", legacyHash));
+            recovered = ecrecover(legacyEthSigned, v, r, s);
+        }
+
+        if (recovered == address(0) || recovered != signer) revert InvalidSignature();
+
+        hasClaimed[msg.sender] = true;
+
+        token.transfer(msg.sender, amount);
+
+        emit Claimed(msg.sender, amount);
     }
 
     // Verify that `proof` connects `leaf` to `merkleRoot`. The leaf format and the
     // node-combination rule used here must match tests/merkle.ts.
     function _verify(bytes32[] calldata proof, bytes32 leaf) internal view returns (bool) {
-        // TODO
+        bytes32 computedHash = leaf;
+        for (uint256 i = 0; i < proof.length; i++) {
+            bytes32 proofElement = proof[i];
+            if (computedHash <= proofElement) {
+                computedHash = keccak256(abi.encodePacked(computedHash, proofElement));
+            } else {
+                computedHash = keccak256(abi.encodePacked(proofElement, computedHash));
+            }
+        }
+        return computedHash == merkleRoot;
     }
 }
